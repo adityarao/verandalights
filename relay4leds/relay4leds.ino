@@ -1,34 +1,47 @@
+// Default include class for ESP8266 boards 
 #include <ESP8266WiFi.h>
 #include <ESP8266WebServer.h>
+
+// Enables UDP
 #include <WiFiUdp.h>
+
+// NST time management libraries 
 #include <Time.h>
 #include <TimeLib.h>
+
+// Secure WiFi client 
 #include <WiFiClientSecure.h>
+
+// MIT Licensed JSON library for Arduino based systems 
 #include <ArduinoJson.h>
 
-#define ssid  ""
-#define password ""
+// define your SSID / password 
+#define ssid  "harisarvottama"
+#define password "9885104058"
 
+// set some parameters to define time
 #define MAX_ATTEMPTS_FOR_TIME 5
 #define MAX_ATTEMPTS 30
+#define CHECK_SWITCH_TIME 60000 
+// every 10 mins
+#define CHECK_SCHEDULES 600000
+#define MAX_SCHEDULES 5
 
+// define how much IST exceeds GMT in seconds 
+#define IST 19800
+
+
+// define the LED Pin numbers
 #define REDLED D6
 #define WHITELED D5
 #define GREENLED D8
 #define BLUELED D7
 
-#define IST 19800
+#define DEBUG 
 
-#define CHECK_SWITCH_TIME 60000 
-
-// every 10 mins
-#define CHECK_SCHEDULES 600000
-
-#define MAX_SCHEDULES 5
-
+// define host and connection params to Google Spread Sheets
 const char *host = "sheets.googleapis.com";
 const int httpsPort = 443;
-
 // connect to a 2 column google sheet with the following layout 
 // |Start Time    | End Time
 // | 1730         | 2215
@@ -36,9 +49,9 @@ const int httpsPort = 443;
 // | 745          | 753
 // | 1730         | 1750
 // replace the sheet id and your api key
-const char *sheetsURI = "/v4/spreadsheets/YOUR-SHEET_ID/values/Sheet1!A2:B7?key=YOURKEY";
+const char *sheetsURI = "/v4/spreadsheets/1284L8a4jW9cYtYqkAa4Ttl3CbLrUqQx0mYQjXZ6dnxQ/values/Sheet1!A2:B7?key=AIzaSyDA7nPA320L7-crzsV3OAhUzIkxqupSjhQ";
 
-
+// Maximum size of the data to be fetched from Google Spreadsheets
 const size_t MAX_CONTENT_SIZE = 512;
 
 String localIP = "";
@@ -52,26 +65,43 @@ byte packetBuffer[ NTP_PACKET_SIZE]; //buffer to hold incoming and outgoing pack
 // A UDP instance to let us send and receive packets over UDP
 WiFiUDP udp;
 
+// timeVal is the initial time that is set to the system 
 time_t timeVal; 
+
+// Create a WebServer Object
 ESP8266WebServer server;
 
+// define some counters that will be used with millis() - cannot use delay()
 unsigned long ledCounter = 0, switchCounter =0, counter = 0, scheduleCount = 0;
+
+// Index page - hard-coded, ideally should be encased in PROGMEM (https://www.arduino.cc/en/Reference/PROGMEM)
 const String INDEX_PAGE = "<!DOCTYPE html>\r\n<html>\r\n<head> \r\n<title>On/Off Switch </title>\r\n</head>\r\n<style> \r\n.button_on {\r\n  display: block;\r\n  height:100px;\r\n  width:80%;\r\n  padding: 15px 25px;\r\n  font-size: 24px;\r\n  font-size: 4.0vw;\r\n  margin-left:auto;\r\n  margin-right:auto;\r\n  margin-bottom:25px;\r\n  margin-top:auto;  \r\n  cursor: pointer;\r\n  text-align: center;\r\n  text-decoration: none;\r\n  outline: none;\r\n  color: #fff;\r\n  background-color: GREEN;\r\n  border: none;\r\n  border-radius: 15px;\r\n  box-shadow: 0 9px #999;\r\n}\r\n\r\n.button_off {\r\n  display: block;\r\n  height:100px;\r\n  width:80%;  \r\n  padding: 15px 25px;\r\n  font-size: 24px;\r\n  font-size: 4.0vw;\r\n  margin-left:auto;\r\n  margin-right:auto;  \r\n  margin-bottom:auto;\r\n  margin-top:auto;  \r\n  cursor: pointer;\r\n  text-align: center;\r\n  text-decoration: none;\r\n  outline: none;\r\n  color: #fff;\r\n  background-color: RED;\r\n  border: none;\r\n  border-radius: 15px;\r\n  box-shadow: 0 9px #999;\r\n}\r\n.button_on:hover {background-color: #3e8e41}\r\n.button_off:hover {background-color: #ff3341}\r\n\r\n.button_off:active {\r\n  background-color: #ff3341;\r\n  box-shadow: 0 5px #666;\r\n  transform: translateY(4px);\r\n\r\n}\r\n\r\n.button_on:active {\r\n  background-color: #3e8e41;\r\n  box-shadow: 0 5px #666;\r\n  transform: translateY(4px);\r\n\r\n}\r\n</style>\r\n<body>\r\n\r\n<form action=\"/\" method=\"post\">\r\n<table>\r\n  <button name=\"submit\" align=\"center\" class=\"button_on\" type=\"submit\" value=\"ON\"> ON </button>\r\n  <button name=\"submit\" align=\"center\" class=\"button_off\" type=\"submit\" value=\"OFF\"> OFF </button> \r\n </table>\r\n</form> \r\n\r\n</body>\r\n</html>";
+
+// define the pins as an array to handle it easily
 int pins [] = {REDLED, GREENLED, WHITELED, BLUELED};
+
+//define the start and end times
 unsigned int startTime, stopTime; 
 
+//define a structure to hold the start and end times in the schedule. 
 typedef struct {
   int startTime;
   int endTime;
 } t_schedule;
 
+// global variables to ensure schedules are set
 int g_definedSchedules = 0;
+
+// define the maximum number of schedules
 t_schedule g_schedules[MAX_SCHEDULES];
 
+
+// Main setup() routine
 void setup()
 {
-  int attempt = 0;
+  int attempt = 0; // maximum attempt counter
 
+  // set the pin modes for the o/p LEDs
   pinMode(D1, OUTPUT);
   pinMode(D5, OUTPUT);
   pinMode(D6, OUTPUT);
@@ -80,10 +110,14 @@ void setup()
 
   timeVal = 0;  
 
+  // attempt to connect to WiFi
   if(connectToWifi()) {
-    Serial.println("Connected to Wifi");
+    Serial.println("Connected to Wifi...");
+
     digitalWrite(GREENLED, LOW);
 
+    // make some attempts to get the current time.
+    // #TODO: internet connectivity issues or NST time service is down at set up
     while(attempt < MAX_ATTEMPTS_FOR_TIME) {
       timeVal = getTime();
       if(timeVal) // got time !
@@ -92,67 +126,55 @@ void setup()
       attempt++; 
     }
 
-    Serial.print("Get time value : ");
+    Serial.print("Time obtained from NST : ");
     Serial.println(timeVal);    
   } else {
-    digitalWrite(D1, HIGH);
+    // if you cannot connect to the internet, the output must be set to LOW
+    digitalWrite(D1, LOW);
   }
 
+  // initialize the counters to millis() - which will start the local clock
   scheduleCount = switchCounter = ledCounter = millis();
 
+  // set the time value 
   if(timeVal > 0) {
     setTime(timeVal);
-  }
+  } // #TODO 2: In case we cannot obtain time value
 
+  // set the getTime() API as the sync provider API (will call this api repeatedly)
   setSyncProvider(getTime);
+
+  // call every x seconds to synch up time
   setSyncInterval(600);    
 
+  // obtain and set the schedules from Google Spreadsheets
   setSchedules(host, sheetsURI);
 }
 
+// This is the main loop() function
 void loop() 
 {
+    // Handle the web client
+    // #TODO 3: handle default requests
     server.handleClient(); 
 
-    if(millis() - switchCounter > CHECK_SWITCH_TIME) { // check every 1 minute(s)
-      unsigned int t = hour()*100 + minute();
-
-      if(isTimeInSchedule(t)) {
-        digitalWrite(D1, LOW); // turn ON on NC at relay
-
-        digitalWrite(D0, HIGH);
-
-        Serial.print("Turning ON LED due to time :");
-        Serial.println(t);
-
-      } else {
-        digitalWrite(D1, HIGH);
-
-        digitalWrite(D0, LOW);        
-        Serial.print("Turning OFF LED due to time :");
-        Serial.println(t);        
-      }
-
-      switchCounter = millis();
-    }
+    // check if its time to switch
+    checkSwitchTime();
 
     // gets leds to dance by seconds 
-    if(millis() - ledCounter > (150-2*second())) {
-      counter++; 
+    gamifyLEDs();
 
-      if(minute()%2) {
-        digitalWrite(pins[counter%4], !digitalRead(pins[counter%4]));
-      } else {
-        digitalWrite(pins[3-counter%4], !digitalRead(pins[3-counter%4]));
-      }
-      ledCounter = millis();
-    }
+    // check if its time to refresh schedules from google docs
+    refreshSchedules();
+}
 
-    if(millis() - scheduleCount > CHECK_SCHEDULES) {
-      // get schedules from google sheets
-      setSchedules(host, sheetsURI);
-      scheduleCount = millis();
-    }
+void refreshSchedules()
+{
+  if(millis() - scheduleCount > CHECK_SCHEDULES) {
+    // get schedules from google sheets
+    setSchedules(host, sheetsURI);
+    scheduleCount = millis();
+  }
 }
 
 bool connectToWifi() {
@@ -231,6 +253,7 @@ void handleSubmit()
   server.send(200, "text/html", INDEX_PAGE);
 }
 
+
 time_t getTime() 
 {
   WiFi.hostByName(ntpServerName, timeServerIP); 
@@ -300,6 +323,42 @@ unsigned long sendNTPpacket(IPAddress& address)
   udp.beginPacket(address, 123); //NTP requests are to port 123
   udp.write(packetBuffer, NTP_PACKET_SIZE);
   udp.endPacket();
+}
+
+void checkSwitchTime()
+{
+   if(millis() - switchCounter > CHECK_SWITCH_TIME) { // check every 1 minute(s)
+    unsigned int t = hour()*100 + minute();
+
+    if(isTimeInSchedule(t)) {
+      digitalWrite(D1, LOW); // turn ON on NC at relay
+
+      Serial.print("Turning ON LED due to time :");
+      Serial.println(t);
+
+    } else {
+      digitalWrite(D1, HIGH);
+      Serial.print("Turning OFF LED due to time :");
+      Serial.println(t);        
+    }
+
+    switchCounter = millis();
+  }
+}
+
+void gamifyLEDs() 
+{
+  if(millis() - ledCounter > (150-2*second())) {
+    counter++; 
+
+    if(minute()%2) {
+      digitalWrite(pins[counter%4], !digitalRead(pins[counter%4]));
+    } else {
+      digitalWrite(pins[3-counter%4], !digitalRead(pins[3-counter%4]));
+    }
+    ledCounter = millis();
+  }
+
 }
 
 boolean syncTimeSheetFromGoogleSheets(const char* host, const char* uri) {
